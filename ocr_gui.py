@@ -118,7 +118,13 @@ class OcrGui(QtWidgets.QWidget):
         self._log("Controleer Tesseract...")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
-            ocr_extract.ensure_tesseract()
+            ensure_fn = getattr(ocr_extract, "ensure_tesseract", None)
+            if ensure_fn is None:
+                raise AttributeError(
+                    "ensure_tesseract ontbreekt in ocr_extract.py. "
+                    "Werk het script bij naar de nieuwste versie."
+                )
+            ensure_fn()
             cmd = ocr_extract.pytesseract.pytesseract.tesseract_cmd
         except Exception as exc:
             self._log(f"Fout: {exc}")
