@@ -318,37 +318,23 @@ def draw_debug(image: np.ndarray, matches: Sequence[SymbolMatch]) -> np.ndarray:
     return debug
 
 
-def main() -> int:
-    readme_usage = (
-        "OCRScript usage:\n"
-        "  python ocr_extract.py --in_dir screenshots --out_csv output.csv \n"
-        "  Optional: --symbols_csv symbols.csv --templates_json templates.json --debug_dir debug\n"
-    )
-
-    parser = argparse.ArgumentParser(
-        description="Extract symbol/parameter tables from CX Designer screenshots.",
-        epilog=readme_usage,
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument("--in_dir", required=True, help="Input directory with PNG screenshots")
-    parser.add_argument("--out_csv", required=True, help="Output CSV path")
-    parser.add_argument("--symbols_csv", help="Optional CSV with valid symbols (1 column)")
-    parser.add_argument("--templates_json", help="Optional JSON with fallback ROIs")
-    parser.add_argument("--debug_dir", help="Optional directory for debug outputs")
-    parser.add_argument("--min_symbols", type=int, default=2, help="Minimum symbols before fallback")
-    parser.add_argument("--symbol_conf", type=float, default=55.0, help="Confidence threshold for symbols")
-    args = parser.parse_args()
-
-    in_dir = Path(args.in_dir)
+def run_extraction(
+    in_dir: Path,
+    out_csv: Path,
+    symbols_csv: Optional[str],
+    templates_json: Optional[str],
+    debug_dir: Optional[Path],
+    min_symbols: int,
+    symbol_conf: float,
+) -> int:
     if not in_dir.exists():
-        parser.error(f"Input directory not found: {in_dir}")
+        raise FileNotFoundError(f"Input directory not found: {in_dir}")
 
-    debug_dir = Path(args.debug_dir) if args.debug_dir else None
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True)
 
-    symbols_set = load_symbols(args.symbols_csv)
-    templates = load_templates(args.templates_json)
+    symbols_set = load_symbols(symbols_csv)
+    templates = load_templates(templates_json)
 
     rows: List[Dict[str, str]] = []
     for file_path in sorted(in_dir.glob("*.png")):
@@ -359,12 +345,12 @@ def main() -> int:
         processed = preprocess_image(image_bgr)
         page, tab = parse_page_tab(file_path.name)
 
-        symbol_lines = extract_symbol_lines(processed, symbols_set, args.symbol_conf, psm=11)
+        symbol_lines = extract_symbol_lines(processed, symbols_set, symbol_conf, psm=11)
         avg_conf = sum(line.conf for line in symbol_lines) / max(len(symbol_lines), 1)
 
         template = select_template(file_path.name, templates) or select_template(page, templates)
-        if (len(symbol_lines) < args.min_symbols or avg_conf < args.symbol_conf) and template:
-            symbol_lines = apply_templates_fallback(processed, template, symbols_set, args.symbol_conf)
+        if (len(symbol_lines) < min_symbols or avg_conf < symbol_conf) and template:
+            symbol_lines = apply_templates_fallback(processed, template, symbols_set, symbol_conf)
 
         matches: List[SymbolMatch] = []
         for line in symbol_lines:
@@ -420,9 +406,45 @@ def main() -> int:
             with open(log_path, "w", encoding="utf-8") as handle:
                 json.dump(log, handle, indent=2)
 
-    write_outputs(args.out_csv, rows)
-    print(f"Wrote {len(rows)} rows to {args.out_csv}")
+    write_outputs(str(out_csv), rows)
+    print(f"Wrote {len(rows)} rows to {out_csv}")
     return 0
+
+
+def main() -> int:
+    readme_usage = (
+        "OCRScript usage:\n"
+        "  python ocr_extract.py --in_dir screenshots --out_csv output.csv \n"
+        "  Optional: --symbols_csv symbols.csv --templates_json templates.json --debug_dir debug\n"
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Extract symbol/parameter tables from CX Designer screenshots.",
+        epilog=readme_usage,
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    parser.add_argument("--in_dir", required=True, help="Input directory with PNG screenshots")
+    parser.add_argument("--out_csv", required=True, help="Output CSV path")
+    parser.add_argument("--symbols_csv", help="Optional CSV with valid symbols (1 column)")
+    parser.add_argument("--templates_json", help="Optional JSON with fallback ROIs")
+    parser.add_argument("--debug_dir", help="Optional directory for debug outputs")
+    parser.add_argument("--min_symbols", type=int, default=2, help="Minimum symbols before fallback")
+    parser.add_argument("--symbol_conf", type=float, default=55.0, help="Confidence threshold for symbols")
+    args = parser.parse_args()
+
+    try:
+        return run_extraction(
+            in_dir=Path(args.in_dir),
+            out_csv=Path(args.out_csv),
+            symbols_csv=args.symbols_csv,
+            templates_json=args.templates_json,
+            debug_dir=Path(args.debug_dir) if args.debug_dir else None,
+            min_symbols=args.min_symbols,
+            symbol_conf=args.symbol_conf,
+        )
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    return 1
 
 
 if __name__ == "__main__":

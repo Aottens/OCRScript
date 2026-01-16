@@ -5,7 +5,7 @@
 Installeer de Python afhankelijkheden (inclusief OpenCV) voordat je het script uitvoert:
 
 ```bash
-python -m pip install opencv-python numpy pytesseract pillow
+python -m pip install opencv-python numpy pytesseract pillow pyqt5
 ```
 
 > **Let op:** Als `cv2` ontbreekt krijg je een fout zoals `ModuleNotFoundError: No module named 'cv2'`.
@@ -18,3 +18,11 @@ python ocr_extract.py --in_dir screenshots --out_csv output.csv \
 ```
 
 Zie `python ocr_extract.py --help` voor alle opties.
+
+## GUI
+
+Start de PyQt GUI met:
+
+```bash
+python ocr_gui.py
+```
