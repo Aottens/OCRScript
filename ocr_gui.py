@@ -98,17 +98,14 @@ class OcrGui(QtWidgets.QWidget):
         self._log("Start verwerking...")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
-            config = ocr_extract.ExtractionConfig(
-                min_symbols=self.min_symbols.value(),
-                symbol_conf=self.symbol_conf.value(),
-            )
             ocr_extract.run_extraction(
                 in_dir=Path(in_dir),
                 out_csv=Path(out_csv),
                 symbols_csv=symbols_csv,
                 templates_json=templates_json,
                 debug_dir=Path(debug_dir) if debug_dir else None,
-                config=config,
+                min_symbols=self.min_symbols.value(),
+                symbol_conf=self.symbol_conf.value(),
             )
         except Exception as exc:
             self._log(f"Fout: {exc}")
@@ -122,7 +119,13 @@ class OcrGui(QtWidgets.QWidget):
         self._log("Controleer Tesseract...")
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
-            ocr_extract.ensure_tesseract()
+            ensure_fn = getattr(ocr_extract, "ensure_tesseract", None)
+            if ensure_fn is None:
+                raise AttributeError(
+                    "ensure_tesseract ontbreekt in ocr_extract.py. "
+                    "Werk het script bij naar de nieuwste versie."
+                )
+            ensure_fn()
             cmd = ocr_extract.pytesseract.pytesseract.tesseract_cmd
         except Exception as exc:
             self._log(f"Fout: {exc}")

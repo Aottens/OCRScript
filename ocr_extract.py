@@ -45,11 +45,45 @@ class TemplateRois:
     unit_roi: Optional[Tuple[int, int, int, int]]
 
 
-@dataclass
-class ExtractionConfig:
-    min_symbols: int = 2
-    symbol_conf: float = 55.0
-    symbol_psm_modes: Tuple[int, ...] = (11, 6)
+def load_symbols(path: Optional[str]) -> Optional[set[str]]:
+    if not path:
+        return None
+    symbols: set[str] = set()
+    with open(path, newline="", encoding="utf-8") as handle:
+        reader = csv.reader(handle)
+        for row in reader:
+            if not row:
+                continue
+            symbol = row[0].strip()
+            if symbol:
+                symbols.add(symbol)
+    return symbols
+
+
+def preprocess_image(image_bgr: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    scaled = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    thresh = cv2.adaptiveThreshold(
+        scaled,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        10,
+    )
+    blurred = cv2.medianBlur(thresh, 3)
+    return blurred
+
+
+def preprocess_symbols_image(image_bgr: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    scaled = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    return cv2.medianBlur(scaled, 3)
+
+
+def normalize_symbol_text(text: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_\.\[\]]", "", text)
+    return cleaned.upper()
 
 
 def ensure_tesseract() -> None:
@@ -102,53 +136,6 @@ def ensure_tesseract() -> None:
             f"Tesseract is niet bruikbaar via '{resolved}'. Controleer je installatie "
             "of zet TESSERACT_CMD naar het juiste pad."
         ) from exc
-
-
-def load_symbols(path: Optional[str]) -> Optional[set[str]]:
-    if not path:
-        return None
-    symbols: set[str] = set()
-    with open(path, newline="", encoding="utf-8") as handle:
-        reader = csv.reader(handle)
-        for row in reader:
-            if not row:
-                continue
-            symbol = row[0].strip()
-            if symbol:
-                symbols.add(symbol)
-    return symbols
-
-
-def normalize_symbol_text(text: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_\.\[\]]", "", text)
-    return cleaned.upper()
-
-
-def build_symbol_lookup(symbols_set: Optional[set[str]]) -> Optional[Dict[str, str]]:
-    if symbols_set is None:
-        return None
-    return {normalize_symbol_text(symbol): symbol for symbol in symbols_set}
-
-
-def preprocess_image(image_bgr: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    scaled = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-    thresh = cv2.adaptiveThreshold(
-        scaled,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31,
-        10,
-    )
-    blurred = cv2.medianBlur(thresh, 3)
-    return blurred
-
-
-def preprocess_symbol_candidates(image_bgr: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    scaled = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-    return cv2.medianBlur(scaled, 3)
 
 
 def parse_page_tab(filename: str) -> Tuple[str, str]:
@@ -399,31 +386,14 @@ def draw_debug(image: np.ndarray, matches: Sequence[SymbolMatch]) -> np.ndarray:
     return debug
 
 
-def find_symbol_lines(
-    processed: np.ndarray,
-    symbols_image: np.ndarray,
-    symbol_lookup: Optional[Dict[str, str]],
-    conf_threshold: float,
-    psm_modes: Sequence[int],
-) -> List[OcrLine]:
-    for psm in psm_modes:
-        symbol_lines = extract_symbol_lines(processed, symbol_lookup, conf_threshold, psm=psm)
-        if symbol_lines:
-            return symbol_lines
-    for psm in psm_modes:
-        symbol_lines = extract_symbol_lines(symbols_image, symbol_lookup, conf_threshold, psm=psm)
-        if symbol_lines:
-            return symbol_lines
-    return []
-
-
 def run_extraction(
     in_dir: Path,
     out_csv: Path,
     symbols_csv: Optional[str],
     templates_json: Optional[str],
     debug_dir: Optional[Path],
-    config: ExtractionConfig,
+    min_symbols: int,
+    symbol_conf: float,
 ) -> int:
     ensure_tesseract()
     if not in_dir.exists():
@@ -433,7 +403,9 @@ def run_extraction(
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     symbols_set = load_symbols(symbols_csv)
-    symbol_lookup = build_symbol_lookup(symbols_set)
+    symbol_lookup = None
+    if symbols_set is not None:
+        symbol_lookup = {normalize_symbol_text(symbol): symbol for symbol in symbols_set}
     templates = load_templates(templates_json)
 
     files = sorted(in_dir.glob("*.png"))
@@ -447,21 +419,19 @@ def run_extraction(
             print(f"Warning: unable to read {file_path}", file=sys.stderr)
             continue
         processed = preprocess_image(image_bgr)
-        symbols_image = preprocess_symbol_candidates(image_bgr)
+        symbols_image = preprocess_symbols_image(image_bgr)
         page, tab = parse_page_tab(file_path.name)
 
-        symbol_lines = find_symbol_lines(
-            processed,
-            symbols_image,
-            symbol_lookup,
-            config.symbol_conf,
-            config.symbol_psm_modes,
-        )
+        symbol_lines = extract_symbol_lines(processed, symbol_lookup, symbol_conf, psm=11)
+        if not symbol_lines:
+            symbol_lines = extract_symbol_lines(processed, symbol_lookup, symbol_conf, psm=6)
+        if not symbol_lines:
+            symbol_lines = extract_symbol_lines(symbols_image, symbol_lookup, symbol_conf, psm=6)
         avg_conf = sum(line.conf for line in symbol_lines) / max(len(symbol_lines), 1)
 
         template = select_template(file_path.name, templates) or select_template(page, templates)
-        if (len(symbol_lines) < config.min_symbols or avg_conf < config.symbol_conf) and template:
-            symbol_lines = apply_templates_fallback(processed, template, symbol_lookup, config.symbol_conf)
+        if (len(symbol_lines) < min_symbols or avg_conf < symbol_conf) and template:
+            symbol_lines = apply_templates_fallback(processed, template, symbol_lookup, symbol_conf)
 
         if not symbol_lines:
             print(f"Warning: no symbols detected in {file_path.name}", file=sys.stderr)
@@ -559,8 +529,6 @@ def main() -> int:
     parser.add_argument("--symbol_conf", type=float, default=55.0, help="Confidence threshold for symbols")
     args = parser.parse_args()
 
-    config = ExtractionConfig(min_symbols=args.min_symbols, symbol_conf=args.symbol_conf)
-
     try:
         return run_extraction(
             in_dir=Path(args.in_dir),
@@ -568,7 +536,8 @@ def main() -> int:
             symbols_csv=args.symbols_csv,
             templates_json=args.templates_json,
             debug_dir=Path(args.debug_dir) if args.debug_dir else None,
-            config=config,
+            min_symbols=args.min_symbols,
+            symbol_conf=args.symbol_conf,
         )
     except FileNotFoundError as exc:
         parser.error(str(exc))
