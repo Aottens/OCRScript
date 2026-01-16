@@ -26,3 +26,5 @@ Start de PyQt GUI met:
 ```bash
 python ocr_gui.py
 ```
+
+Gebruik de knop "Check Tesseract" om snel te controleren welke executable gevonden is.

@@ -37,9 +37,15 @@ class OcrGui(QtWidgets.QWidget):
 
         layout.addLayout(options_layout)
 
+        action_row = QtWidgets.QHBoxLayout()
+        self.check_button = QtWidgets.QPushButton("Check Tesseract")
+        self.check_button.clicked.connect(self._check_tesseract)
+        action_row.addWidget(self.check_button)
+
         self.run_button = QtWidgets.QPushButton("Start OCR")
         self.run_button.clicked.connect(self._run)
-        layout.addWidget(self.run_button)
+        action_row.addWidget(self.run_button)
+        layout.addLayout(action_row)
 
         self.status = QtWidgets.QTextEdit()
         self.status.setReadOnly(True)
@@ -104,6 +110,20 @@ class OcrGui(QtWidgets.QWidget):
             self._log(f"Fout: {exc}")
         else:
             self._log("Klaar.")
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+    def _check_tesseract(self) -> None:
+        self.status.clear()
+        self._log("Controleer Tesseract...")
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            ocr_extract.ensure_tesseract()
+            cmd = ocr_extract.pytesseract.pytesseract.tesseract_cmd
+        except Exception as exc:
+            self._log(f"Fout: {exc}")
+        else:
+            self._log(f"Tesseract gevonden: {cmd}")
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 
