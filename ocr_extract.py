@@ -54,7 +54,9 @@ def load_symbols(path: Optional[str]) -> Optional[set[str]]:
         for row in reader:
             if not row:
                 continue
-            symbols.add(row[0].strip())
+            symbol = row[0].strip()
+            if symbol:
+                symbols.add(symbol)
     return symbols
 
 
@@ -71,6 +73,17 @@ def preprocess_image(image_bgr: np.ndarray) -> np.ndarray:
     )
     blurred = cv2.medianBlur(thresh, 3)
     return blurred
+
+
+def preprocess_symbols_image(image_bgr: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    scaled = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    return cv2.medianBlur(scaled, 3)
+
+
+def normalize_symbol_text(text: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_\.\[\]]", "", text)
+    return cleaned.upper()
 
 
 def ensure_tesseract() -> None:
@@ -136,7 +149,7 @@ def parse_page_tab(filename: str) -> Tuple[str, str]:
 
 def extract_symbol_lines(
     image: np.ndarray,
-    symbols_set: Optional[set[str]],
+    symbol_lookup: Optional[Dict[str, str]],
     conf_threshold: float,
     psm: int,
 ) -> List[OcrLine]:
@@ -176,15 +189,16 @@ def extract_symbol_lines(
         x1 = max(x + w for x, w in zip(xs, ws))
         y1 = max(y + h for y, h in zip(ys, hs))
         bbox = (x0, y0, x1 - x0, y1 - y0)
-        line_text_clean = line_text.replace(" ", "").strip()
-        if symbols_set is not None:
-            if line_text_clean in symbols_set:
-                results.append(OcrLine(text=line_text_clean, conf=avg_conf, bbox=bbox))
+        normalized = normalize_symbol_text(line_text)
+        if symbol_lookup is not None:
+            matched = symbol_lookup.get(normalized)
+            if matched:
+                results.append(OcrLine(text=matched, conf=avg_conf, bbox=bbox))
             continue
         if avg_conf < conf_threshold:
             continue
-        if SYMBOL_REGEX.match(line_text_clean):
-            results.append(OcrLine(text=line_text_clean, conf=avg_conf, bbox=bbox))
+        if SYMBOL_REGEX.match(normalized):
+            results.append(OcrLine(text=normalized, conf=avg_conf, bbox=bbox))
     return results
 
 
@@ -296,14 +310,14 @@ def match_parameter_text(
 def apply_templates_fallback(
     image: np.ndarray,
     template: TemplateRois,
-    symbols_set: Optional[set[str]],
+    symbol_lookup: Optional[Dict[str, str]],
     conf_threshold: float,
 ) -> List[OcrLine]:
     if not template.symbol_roi:
         return []
     x, y, w, h = template.symbol_roi
     cropped = image[y : y + h, x : x + w]
-    symbol_lines = extract_symbol_lines(cropped, symbols_set, conf_threshold, psm=6)
+    symbol_lines = extract_symbol_lines(cropped, symbol_lookup, conf_threshold, psm=6)
     adjusted: List[OcrLine] = []
     for line in symbol_lines:
         bx, by, bw, bh = line.bbox
@@ -389,6 +403,9 @@ def run_extraction(
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     symbols_set = load_symbols(symbols_csv)
+    symbol_lookup = None
+    if symbols_set is not None:
+        symbol_lookup = {normalize_symbol_text(symbol): symbol for symbol in symbols_set}
     templates = load_templates(templates_json)
 
     files = sorted(in_dir.glob("*.png"))
@@ -402,14 +419,19 @@ def run_extraction(
             print(f"Warning: unable to read {file_path}", file=sys.stderr)
             continue
         processed = preprocess_image(image_bgr)
+        symbols_image = preprocess_symbols_image(image_bgr)
         page, tab = parse_page_tab(file_path.name)
 
-        symbol_lines = extract_symbol_lines(processed, symbols_set, symbol_conf, psm=11)
+        symbol_lines = extract_symbol_lines(processed, symbol_lookup, symbol_conf, psm=11)
+        if not symbol_lines:
+            symbol_lines = extract_symbol_lines(processed, symbol_lookup, symbol_conf, psm=6)
+        if not symbol_lines:
+            symbol_lines = extract_symbol_lines(symbols_image, symbol_lookup, symbol_conf, psm=6)
         avg_conf = sum(line.conf for line in symbol_lines) / max(len(symbol_lines), 1)
 
         template = select_template(file_path.name, templates) or select_template(page, templates)
         if (len(symbol_lines) < min_symbols or avg_conf < symbol_conf) and template:
-            symbol_lines = apply_templates_fallback(processed, template, symbols_set, symbol_conf)
+            symbol_lines = apply_templates_fallback(processed, template, symbol_lookup, symbol_conf)
 
         if not symbol_lines:
             print(f"Warning: no symbols detected in {file_path.name}", file=sys.stderr)
@@ -453,6 +475,14 @@ def run_extraction(
             cv2.imwrite(str(debug_path), debug_image)
             log = {
                 "file": file_path.name,
+                "symbol_lines": [
+                    {
+                        "text": line.text,
+                        "confidence": line.conf,
+                        "bbox": line.bbox,
+                    }
+                    for line in symbol_lines
+                ],
                 "symbols": [
                     {
                         "symbol": match.symbol,
