@@ -2,6 +2,7 @@
 """PyQt GUI for OCRScript extraction."""
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
 
@@ -109,7 +110,7 @@ class OcrGui(QtWidgets.QWidget):
         except Exception as exc:
             self._log(f"Fout: {exc}")
         else:
-            self._log("Klaar.")
+            self._log(self._summarize_output(out_csv))
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 
@@ -139,6 +140,23 @@ class OcrGui(QtWidgets.QWidget):
 
     def _log(self, message: str) -> None:
         self.status.append(message)
+
+    def _summarize_output(self, out_csv: str) -> str:
+        path = Path(out_csv)
+        if not path.exists():
+            return "Klaar, maar output CSV is niet gevonden."
+        try:
+            with open(path, newline="", encoding="utf-8") as handle:
+                reader = csv.reader(handle)
+                rows = list(reader)
+        except Exception:
+            return "Klaar, maar output CSV kon niet worden gelezen."
+        if len(rows) <= 1:
+            return (
+                "Klaar, maar er zijn geen rijen geëxtraheerd. "
+                "Probeer een debug map in te stellen om OCR-boxes te inspecteren."
+            )
+        return f"Klaar. {len(rows) - 1} rijen geëxtraheerd."
 
 
 def main() -> int:

@@ -391,8 +391,12 @@ def run_extraction(
     symbols_set = load_symbols(symbols_csv)
     templates = load_templates(templates_json)
 
+    files = sorted(in_dir.glob("*.png"))
+    if not files:
+        raise FileNotFoundError(f"No PNG screenshots found in: {in_dir}")
+
     rows: List[Dict[str, str]] = []
-    for file_path in sorted(in_dir.glob("*.png")):
+    for file_path in files:
         image_bgr = cv2.imread(str(file_path))
         if image_bgr is None:
             print(f"Warning: unable to read {file_path}", file=sys.stderr)
@@ -406,6 +410,9 @@ def run_extraction(
         template = select_template(file_path.name, templates) or select_template(page, templates)
         if (len(symbol_lines) < min_symbols or avg_conf < symbol_conf) and template:
             symbol_lines = apply_templates_fallback(processed, template, symbols_set, symbol_conf)
+
+        if not symbol_lines:
+            print(f"Warning: no symbols detected in {file_path.name}", file=sys.stderr)
 
         matches: List[SymbolMatch] = []
         for line in symbol_lines:
@@ -462,6 +469,11 @@ def run_extraction(
                 json.dump(log, handle, indent=2)
 
     write_outputs(str(out_csv), rows)
+    if not rows:
+        print(
+            "Warning: no rows were extracted. Try enabling --debug_dir to inspect OCR output.",
+            file=sys.stderr,
+        )
     print(f"Wrote {len(rows)} rows to {out_csv}")
     return 0
 
