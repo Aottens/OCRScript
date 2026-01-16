@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -69,6 +71,58 @@ def preprocess_image(image_bgr: np.ndarray) -> np.ndarray:
     )
     blurred = cv2.medianBlur(thresh, 3)
     return blurred
+
+
+def ensure_tesseract() -> None:
+    env_candidates = [
+        os.environ.get("TESSERACT_CMD"),
+        os.environ.get("TESSERACT_PATH"),
+    ]
+    candidates: List[str] = []
+    for candidate in env_candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_dir():
+            for name in ("tesseract.exe", "tesseract"):
+                exe_path = path / name
+                if exe_path.exists():
+                    candidates.append(str(exe_path))
+        else:
+            candidates.append(str(path))
+
+    current_cmd = pytesseract.pytesseract.tesseract_cmd
+    if current_cmd:
+        candidates.append(current_cmd)
+    candidates.append("tesseract")
+
+    resolved: Optional[str] = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            resolved = str(path)
+            break
+        found = shutil.which(candidate)
+        if found:
+            resolved = found
+            break
+
+    if not resolved:
+        raise FileNotFoundError(
+            "Tesseract is niet gevonden. Zet TESSERACT_CMD naar het volledige pad "
+            "van tesseract.exe of voeg de installatiemap toe aan PATH."
+        )
+
+    pytesseract.pytesseract.tesseract_cmd = resolved
+    try:
+        _ = pytesseract.get_tesseract_version()
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"Tesseract is niet bruikbaar via '{resolved}'. Controleer je installatie "
+            "of zet TESSERACT_CMD naar het juiste pad."
+        ) from exc
 
 
 def parse_page_tab(filename: str) -> Tuple[str, str]:
@@ -327,6 +381,7 @@ def run_extraction(
     min_symbols: int,
     symbol_conf: float,
 ) -> int:
+    ensure_tesseract()
     if not in_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {in_dir}")
 

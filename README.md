@@ -9,6 +9,8 @@ python -m pip install opencv-python numpy pytesseract pillow pyqt5
 ```
 
 > **Let op:** Als `cv2` ontbreekt krijg je een fout zoals `ModuleNotFoundError: No module named 'cv2'`.
+> Als Tesseract niet gevonden wordt kun je `TESSERACT_CMD` instellen naar het volledige pad
+> van `tesseract.exe` (bijv. `C:\Program Files\Tesseract-OCR\tesseract.exe`).
 
 ## Gebruik
 
