@@ -280,8 +280,11 @@ def match_parameter_text(
     for expand in (0, max_expand):
         y0 = y - band - expand
         y1 = y + h + band + expand
-        roi = clip_roi(0, y0, x - 5, y1)
-        if roi:
+        left_roi = clip_roi(0, y0, x - 5, y1)
+        right_roi = clip_roi(x + w + 5, y0, image_w, y1)
+        for roi in (left_roi, right_roi):
+            if not roi:
+                continue
             for psm in (7, 6):
                 text, conf = ocr_roi(image, roi, psm)
                 if text and text.strip() != symbol_match.symbol:
@@ -291,8 +294,11 @@ def match_parameter_text(
             break
 
     if not candidates:
-        roi = clip_roi(0, y - max_expand, x - 5, y)
-        if roi:
+        upper_left = clip_roi(0, y - max_expand, x - 5, y)
+        upper_right = clip_roi(x + w + 5, y - max_expand, image_w, y)
+        for roi in (upper_left, upper_right):
+            if not roi:
+                continue
             text, conf = ocr_roi(image, roi, 6)
             if text and text.strip() != symbol_match.symbol:
                 distance = abs((y - (roi[1] + roi[3] / 2)))
